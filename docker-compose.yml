@@ -1,0 +1,103 @@
+name: prontuario-nosql
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: prontuario-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-MongoDev2026}
+    ports:
+      - "127.0.0.1:${MONGO_HOST_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    container_name: prontuario-redis
+    restart: unless-stopped
+    # AOF habilitado: filas, ocupação de leitos e locks sobrevivem a restart
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-RedisDev2026}", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-RedisDev2026}
+    ports:
+      # 6380 no host: evita colidir com um Redis local na porta padrão 6379
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping 2>/dev/null | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: prontuario-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-Neo4jDev2026}
+      # Atenção: NÃO defina NEO4J_PASSWORD aqui — a imagem trata todo NEO4J_* como configuração do servidor
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 768m
+    ports:
+      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"   # Neo4j Browser
+      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"   # Bolt
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$${NEO4J_AUTH#neo4j/}\" 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 40s
+
+  # Tarefa única: cria schemas/índices/constraints e carrega os dados iniciais
+  init:
+    build: .
+    container_name: prontuario-init
+    command: ["python", "-m", "scripts.bootstrap"]
+    restart: "no"
+    environment: &app_env
+      MONGO_HOST: mongo
+      MONGO_USER: ${MONGO_USER:-admin}
+      MONGO_PASSWORD: ${MONGO_PASSWORD:-MongoDev2026}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-RedisDev2026}
+      NEO4J_URI: ${NEO4J_URI:-bolt://neo4j:7687}
+      NEO4J_USERNAME: ${NEO4J_USERNAME:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-Neo4jDev2026}
+      NEO4J_DATABASE: ${NEO4J_DATABASE:-neo4j}
+      SEED_SENHA_DEMO: ${SEED_SENHA_DEMO:-Hosp2026demo}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1800}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  app:
+    build: .
+    container_name: prontuario-app
+    restart: unless-stopped
+    environment: *app_env
+    ports:
+      - "${APP_PORT:-8501}:8501"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+volumes:
+  mongo_data:
+  redis_data:
+  neo4j_data:

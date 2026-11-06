@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest==8.3.3
+pytest-cov==6.0.0
+mongomock==4.3.0
+fakeredis[lua]==2.26.1

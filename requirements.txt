@@ -1,0 +1,6 @@
+streamlit==1.40.2
+pymongo==4.10.1
+redis==5.2.0
+neo4j==5.26.0
+pandas==2.2.3
+python-dotenv==1.0.1
